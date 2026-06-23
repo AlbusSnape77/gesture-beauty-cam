@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>美颜手势 · 瘦脸大眼 + 温柔特效</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { height:100%; overflow:hidden; user-select:none;
+    background:linear-gradient(160deg,#ffe9f2 0%,#f3e9ff 50%,#e9f5ff 100%);
+    color:#7a5b6e; font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
+.stage { position:relative; width:100%; height:100%; overflow:hidden; }
+#video { display:none; }
+#canvas { position:absolute; inset:0; width:100%; height:100%; }
+
+.overlay { position:absolute; inset:0; pointer-events:none; z-index:4; }
+.glow { background:radial-gradient(ellipse at 50% 28%, rgba(255,240,250,0.22) 0%, rgba(255,255,255,0) 55%); }
+.vignette { background:radial-gradient(ellipse at center, rgba(255,255,255,0) 60%, rgba(255,210,230,0.32) 100%); }
+
+.title { position:absolute; top:18px; left:50%; transform:translateX(-50%); z-index:6;
+    font-size:18px; font-weight:700; letter-spacing:3px;
+    background:linear-gradient(90deg,#ff9ec7,#c89bff,#9ec9ff);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    text-shadow:0 2px 14px rgba(255,180,210,0.4); }
+
+/* 美颜设置面板 */
+.panel { position:absolute; top:18px; left:18px; z-index:7; width:210px;
+    background:rgba(255,255,255,0.62); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    border-radius:18px; padding:14px 16px; box-shadow:0 8px 26px rgba(255,170,205,0.32);
+    transition:transform .3s,opacity .3s; }
+.panel.collapsed { transform:translateX(-230px); opacity:0; pointer-events:none; }
+.panel h3 { font-size:13px; color:#c0567f; margin-bottom:8px; letter-spacing:1px; }
+.row { display:flex; align-items:center; gap:8px; margin:9px 0; }
+.row label { font-size:12px; color:#a85c84; width:38px; flex:none; }
+.row input[type=range]{ flex:1; -webkit-appearance:none; height:5px; border-radius:5px;
+    background:linear-gradient(90deg,#ffb3d1,#d8b8ff); outline:none; }
+.row input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:15px; height:15px;
+    border-radius:50%; background:#fff; box-shadow:0 1px 6px rgba(255,120,170,0.7); cursor:pointer; }
+.row .num { font-size:11px; color:#c89bff; width:24px; text-align:right; flex:none; }
+.filters { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+.filters button { border:none; cursor:pointer; font-size:11px; padding:6px 10px; border-radius:100px;
+    background:rgba(255,255,255,0.7); color:#a85c84; transition:all .2s; }
+.filters button.active { background:linear-gradient(90deg,#ffb3d1,#d8b8ff); color:#fff; }
+
+.toggleBtn { position:absolute; top:18px; left:18px; z-index:8; cursor:pointer; border:none;
+    width:42px; height:42px; border-radius:50%; font-size:18px;
+    background:rgba(255,255,255,0.62); backdrop-filter:blur(12px);
+    box-shadow:0 6px 18px rgba(255,170,205,0.35); display:none; }
+
+.controls { position:absolute; bottom:24px; left:50%; transform:translateX(-50%);
+    z-index:6; display:flex; gap:12px; }
+.controls button { border:none; cursor:pointer;
+    background:rgba(255,255,255,0.6); backdrop-filter:blur(12px);
+    color:#a85c84; font-size:13px; font-weight:600; padding:11px 20px; border-radius:100px;
+    box-shadow:0 6px 18px rgba(255,170,205,0.32); transition:all .2s; }
+.controls button:hover { transform:translateY(-2px); }
+.controls button .v { color:#ff7eb3; }
+
+.hint { position:absolute; bottom:82px; left:50%; transform:translateX(-50%); z-index:6;
+    background:rgba(255,255,255,0.55); backdrop-filter:blur(12px); color:#a85c84;
+    padding:10px 22px; border-radius:100px; font-size:13px; font-weight:500;
+    box-shadow:0 6px 18px rgba(255,170,205,0.3); opacity:0; transition:opacity .4s; }
+.hint.show { opacity:1; }
+
+.loading { position:absolute; inset:0; display:flex; flex-direction:column; gap:18px;
+    align-items:center; justify-content:center; z-index:20; transition:opacity .6s;
+    background:linear-gradient(160deg,#ffe9f2,#f3e9ff,#e9f5ff); }
+.loading.hidden { opacity:0; pointer-events:none; }
+.heart-loader { font-size:40px; animation:beat 1s ease-in-out infinite; }
+@keyframes beat { 0%,100%{transform:scale(1);} 50%{transform:scale(1.25);} }
+.loading .t { font-size:14px; letter-spacing:2px; color:#b07a96; }
+
+.error { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    background:rgba(255,255,255,0.92); color:#c0567f; border:2px solid #ffc2da;
+    padding:22px 28px; max-width:80%; text-align:center; line-height:1.8; font-size:14px;
+    border-radius:18px; display:none; z-index:30; white-space:pre-line;
+    box-shadow:0 12px 32px rgba(255,170,205,0.4); }
+.error.show { display:block; }
+</style>
+</head>
+<body>
+<div class="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+
+    <div class="overlay glow"></div>
+    <div class="overlay vignette"></div>
+
+    <div class="title">✨ 美颜手势 ✨</div>
+
+    <button class="toggleBtn" id="toggleBtn">🌸</button>
+    <div class="panel" id="panel">
+        <h3>🌸 美颜调节</h3>
+        <div class="row"><label>磨皮</label><input type="range" id="s_skin"  min="0" max="100" value="48"><span class="num" id="n_skin">48</span></div>
+        <div class="row"><label>美白</label><input type="range" id="s_white" min="0" max="100" value="32"><span class="num" id="n_white">32</span></div>
+        <div class="row"><label>瘦脸</label><input type="range" id="s_slim"  min="0" max="100" value="40"><span class="num" id="n_slim">40</span></div>
+        <div class="row"><label>大眼</label><input type="range" id="s_eye"   min="0" max="100" value="30"><span class="num" id="n_eye">30</span></div>
+        <div class="row"><label>红润</label><input type="range" id="s_blush" min="0" max="100" value="28"><span class="num" id="n_blush">28</span></div>
+        <div class="filters" id="filters"></div>
+    </div>
+
+    <div class="controls">
+        <button id="cmpBtn">对比原图</button>
+        <button id="camBtn">画面 · <span class="v" id="camV">开</span></button>
+    </div>
+
+    <div class="hint" id="hint"></div>
+    <div class="loading" id="loading"><div class="heart-loader">💗</div><div class="t">正在准备美颜镜头…</div></div>
+    <div class="error" id="error"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script>
+/* ===========================================================================
+ * 美颜手势 · 瘦脸/大眼/磨皮/美白/红润 + 温柔特效
+ *  · FaceMesh(468点) 做几何美颜：瘦脸=逐行水平挤压+外侧回填；大眼=眼区缩放+羽化
+ *  · 磨皮=Orton 柔焦(模糊提亮 screen 叠加)；美白=亮度；红润=脸颊柔光
+ *  · Hands 只触发粒子特效，不再画手部骨架线
+ *  · 氛围：飘落花瓣 + 散景柔光 + 微光闪粒；张掌绽放、捏合闪粒、双手漂浮爱心
+ * =========================================================================== */
+const video=document.getElementById('video');
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+const loading=document.getElementById('loading');
+const errorBox=document.getElementById('error');
+const hintBox=document.getElementById('hint');
+
+// 离屏画布：base 存放调色+磨皮后的视频，作为几何变形的采样源
+const base=document.createElement('canvas'), bctx=base.getContext('2d');
+const etmp=document.createElement('canvas'), etx=etmp.getContext('2d'); // 大眼羽化用
+
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+function showHint(m){ hintBox.textContent=m; hintBox.classList.add('show'); }
+function hideHint(){ hintBox.classList.remove('show'); }
+function showError(m){ errorBox.textContent=m; errorBox.classList.add('show'); loading.classList.add('hidden'); }
+
+/* ============ 设置 ============ */
+const beauty={ skin:48, white:32, slim:40, eye:30, blush:28 };
+const FILTERS=[
+    {name:'原图', b:1.03,s:1.05,c:1.0, wash:null,    wa:0   },
+    {name:'奶油', b:1.08,s:1.06,c:0.96,wash:'#fff0d6',wa:0.42},
+    {name:'蜜桃', b:1.07,s:1.12,c:1.0, wash:'#ffd5cf',wa:0.48},
+    {name:'初恋', b:1.12,s:1.02,c:0.94,wash:'#ffe2ee',wa:0.40},
+    {name:'樱花', b:1.06,s:1.10,c:1.0, wash:'#ffd9ec',wa:0.46}
+];
+let filter=1, camOn=true, compare=false;
+
+// 滑块绑定
+[['skin','s_skin','n_skin'],['white','s_white','n_white'],['slim','s_slim','n_slim'],
+ ['eye','s_eye','n_eye'],['blush','s_blush','n_blush']].forEach(([k,sid,nid])=>{
+    const sl=document.getElementById(sid), nu=document.getElementById(nid);
+    sl.addEventListener('input',()=>{ beauty[k]=+sl.value; nu.textContent=sl.value; });
+});
+// 滤镜按钮
+const fbox=document.getElementById('filters');
+FILTERS.forEach((f,i)=>{ const b=document.createElement('button'); b.textContent=f.name;
+    if(i===filter)b.classList.add('active');
+    b.onclick=()=>{ filter=i; [...fbox.children].forEach(c=>c.classList.remove('active')); b.classList.add('active'); };
+    fbox.appendChild(b); });
+// 面板收起 / 对比 / 画面
+const panel=document.getElementById('panel'), toggleBtn=document.getElementById('toggleBtn');
+toggleBtn.onclick=()=>{ panel.classList.remove('collapsed'); toggleBtn.style.display='none'; };
+document.querySelector('.panel h3').addEventListener('click',()=>{ panel.classList.add('collapsed'); toggleBtn.style.display='block'; });
+const cmpBtn=document.getElementById('cmpBtn');
+cmpBtn.onmousedown=()=>compare=true; cmpBtn.onmouseup=()=>compare=false; cmpBtn.onmouseleave=()=>compare=false;
+cmpBtn.ontouchstart=(e)=>{e.preventDefault();compare=true;}; cmpBtn.ontouchend=()=>compare=false;
+const $cv=document.getElementById('camV');
+document.getElementById('camBtn').onclick=()=>{ camOn=!camOn; $cv.textContent=camOn?'开':'关'; };
+
+/* ============ 柔美形状 / 粒子 ============ */
+const PASTEL=['#ffb3d1','#ffc6b0','#d8b8ff','#ffe6a0','#bdeede','#aed4ff','#fff0c9'];
+const rand=(a)=>a[Math.floor(Math.random()*a.length)];
+function heartPath(g,s){ g.beginPath();
+    for(let i=0;i<=28;i++){ const t=i/28*Math.PI*2;
+        const x=16*Math.sin(t)**3, y=-(13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t));
+        const px=x*s/16, py=y*s/16; i?g.lineTo(px,py):g.moveTo(px,py); } g.closePath(); }
+function sparklePath(g,s){ g.beginPath();
+    for(let i=0;i<8;i++){ const r=i%2?s*0.16:s; const a=i/8*Math.PI*2-Math.PI/2;
+        const px=Math.cos(a)*r, py=Math.sin(a)*r; i?g.lineTo(px,py):g.moveTo(px,py); } g.closePath(); }
+function petalPath(g,s){ g.beginPath(); g.moveTo(0,-s);
+    g.bezierCurveTo(s*0.7,-s*0.5, s*0.5,s*0.6, 0,s);
+    g.bezierCurveTo(-s*0.5,s*0.6, -s*0.7,-s*0.5, 0,-s); g.closePath(); }
+
+class P {
+    constructor(x,y,o={}){ this.x=x; this.y=y;
+        this.vx=o.vx ?? (Math.random()-0.5)*0.6;
+        this.vy=o.vy ?? -(0.25+Math.random()*0.7);
+        this.g=o.g ?? 0; this.drag=o.drag ?? 0.99;
+        this.size=o.size ?? 9+Math.random()*7;
+        this.color=o.color ?? rand(PASTEL);
+        this.type=o.type ?? 'sparkle';
+        this.maxLife=o.maxLife ?? 90;
+        this.rot=Math.random()*Math.PI*2; this.vrot=o.vrot ?? (Math.random()-0.5)*0.08;
+        this.sway=o.sway ?? 0.4; this.phase=Math.random()*Math.PI*2;
+        this.age=0; this.life=1; }
+    update(){ this.phase+=0.045;
+        this.x+=this.vx+Math.sin(this.phase)*this.sway;
+        this.y+=this.vy; this.vy+=this.g; this.vx*=this.drag; this.vy*=this.drag;
+        this.rot+=this.vrot; this.age++; this.life=1-this.age/this.maxLife; }
+    dead(){ return this.life<=0 || this.y>canvas.height+40; }
+    draw(g){ const fi=Math.min(1,this.age/8), fo=this.life<0.35?this.life/0.35:1;
+        g.save(); g.globalAlpha=Math.max(0,Math.min(1,fi*fo)*0.92);
+        g.translate(this.x,this.y); g.rotate(this.rot);
+        g.shadowColor=this.color; g.shadowBlur=12; g.fillStyle=this.color;
+        if(this.type==='heart') heartPath(g,this.size);
+        else if(this.type==='petal') petalPath(g,this.size*0.8);
+        else if(this.type==='dot'){ g.beginPath(); g.arc(0,0,this.size*0.4,0,Math.PI*2); }
+        else sparklePath(g,this.size*0.7);
+        g.fill(); g.restore(); }
+}
+const ps=[]; const emit=(x,y,o)=>{ if(ps.length<700) ps.push(new P(x,y,o)); };
+const rings=[];
+function spawnRing(x,y,c){ rings.push({x,y,color:c,r:18,life:1}); }
+function drawRings(g){ for(let i=rings.length-1;i>=0;i--){ const r=rings[i]; r.r+=4.5; r.life-=0.022;
+    if(r.life<=0){ rings.splice(i,1); continue; }
+    g.save(); g.globalAlpha=r.life*0.35; g.strokeStyle=r.color; g.shadowColor=r.color; g.shadowBlur=14;
+    g.lineWidth=3*r.life+0.6; g.beginPath(); g.arc(r.x,r.y,r.r,0,Math.PI*2); g.stroke(); g.restore(); } }
+
+/* ============ 氛围：散景 + 微光 + 飘落花瓣 ============ */
+const bokeh=[], twinkles=[]; let petalTimer=0;
+function initAmbient(W,H){ bokeh.length=0; twinkles.length=0;
+    for(let i=0;i<12;i++) bokeh.push({ x:Math.random()*W, y:Math.random()*H, r:36+Math.random()*78,
+        color:rand(PASTEL), vx:(Math.random()-0.5)*0.22, vy:(Math.random()-0.5)*0.22, phase:Math.random()*6.28 });
+    for(let i=0;i<30;i++) twinkles.push({ x:Math.random()*W, y:Math.random()*H, s:2+Math.random()*3,
+        color:rand(PASTEL), phase:Math.random()*6.28, sp:0.02+Math.random()*0.04 }); }
+function drawAmbient(W,H){
+    for(const b of bokeh){ b.x+=b.vx; b.y+=b.vy; b.phase+=0.012;
+        if(b.x<-b.r)b.x=W+b.r; if(b.x>W+b.r)b.x=-b.r; if(b.y<-b.r)b.y=H+b.r; if(b.y>H+b.r)b.y=-b.r;
+        const a=0.05+0.05*(0.5+0.5*Math.sin(b.phase));
+        const gr=ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,b.r);
+        gr.addColorStop(0,b.color); gr.addColorStop(1,'rgba(255,255,255,0)');
+        ctx.globalAlpha=a; ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill(); }
+    for(const t of twinkles){ t.phase+=t.sp; const a=0.25+0.5*(0.5+0.5*Math.sin(t.phase));
+        ctx.save(); ctx.globalAlpha=a; ctx.translate(t.x,t.y); ctx.fillStyle=t.color;
+        ctx.shadowColor=t.color; ctx.shadowBlur=8; sparklePath(ctx,t.s); ctx.fill(); ctx.restore(); }
+    ctx.globalAlpha=1;
+    // 飘落花瓣（持续，从顶部缓缓落下）
+    petalTimer++;
+    if(petalTimer%14===0) emit(Math.random()*W, -20, { type:'petal', color:rand(['#ffd9ec','#ffe2ee','#ffc6b0','#fff0c9']),
+        size:9+Math.random()*7, vx:(Math.random()-0.3)*0.8, vy:0.8+Math.random()*0.9, g:0.002,
+        sway:1.0, vrot:(Math.random()-0.5)*0.06, maxLife:400 });
+}
+
+/* ============ 关键点工具 ============ */
+const FINGERTIPS=[4,8,12,16,20];
+function palmCenter(lm){ const idx=[0,5,9,13,17]; let cx=0,cy=0;
+    for(const i of idx){cx+=lm[i].x;cy+=lm[i].y;} return {x:cx/idx.length,y:cy/idx.length}; }
+const palmSize=(lm)=>dist(lm[0],lm[9]);
+function isPalmOpen(lm){ const w=lm[0]; const ext=(t,m)=>dist(w,lm[t])>dist(w,lm[m])*1.7;
+    return ext(8,5)&&ext(12,9)&&ext(16,13)&&ext(20,17); }
+function isPinch(lm){ return dist(lm[4],lm[8])<palmSize(lm)*0.45; }
+
+/* ============ 美颜：调色 + 磨皮（绘制到 base）============ */
+function drawBeautyBase(W,H){
+    const F=FILTERS[filter];
+    const whitenMul=1+beauty.white/100*0.16;
+    bctx.setTransform(1,0,0,1,0,0); bctx.clearRect(0,0,W,H);
+    // 调色底层（镜像）
+    bctx.save(); bctx.filter=`brightness(${(F.b*whitenMul).toFixed(3)}) saturate(${F.s}) contrast(${F.c})`;
+    bctx.translate(W,0); bctx.scale(-1,1); bctx.drawImage(video,0,0,W,H); bctx.restore();
+    // 磨皮：Orton 柔焦
+    const skinA=beauty.skin/100*0.6;
+    if(skinA>0.01){ bctx.save(); bctx.globalCompositeOperation='screen'; bctx.globalAlpha=skinA;
+        bctx.filter=`blur(${(beauty.skin/100*9+1).toFixed(1)}px) brightness(1.05)`;
+        bctx.translate(W,0); bctx.scale(-1,1); bctx.drawImage(video,0,0,W,H); bctx.restore(); }
+    // 美白 + 滤镜暖色
+    bctx.globalCompositeOperation='soft-light';
+    if(F.wash){ bctx.globalAlpha=F.wa; bctx.fillStyle=F.wash; bctx.fillRect(0,0,W,H); }
+    if(beauty.white>0){ bctx.globalAlpha=beauty.white/100*0.25; bctx.fillStyle='#ffffff'; bctx.fillRect(0,0,W,H); }
+    bctx.globalCompositeOperation='source-over'; bctx.globalAlpha=1; bctx.filter='none';
+}
+
+/* ============ 瘦脸：逐行水平挤压 + 外侧回填（采样 base → 写 main）============ */
+function slimFace(fp,W,H){
+    const k0=beauty.slim/100*0.13; if(k0<0.004) return;
+    const cx=(fp[234].x+fp[454].x)/2;
+    const halfW0=Math.max(20,dist(fp[234],fp[454])/2);
+    const eyeY=(fp[159].y+fp[386].y)/2;
+    const chinY=fp[152].y;
+    const yTop=eyeY+(chinY-eyeY)*0.12, yBot=chinY+8;
+    if(yBot-yTop<10) return;
+    const SH=5;
+    for(let y=yTop; y<yBot; y+=SH){
+        const t=(y-yTop)/(yBot-yTop);
+        const k=k0*Math.sin(t*Math.PI);            // 两端 0、中部最强
+        if(k<0.003) continue;
+        const halfW=halfW0*(1-0.28*t);             // 越靠下巴脸越窄
+        const gap=halfW*k;
+        const sh=Math.min(SH,yBot-y);
+        // 左半：脸内压缩
+        if(cx-halfW>=0)
+            ctx.drawImage(base, cx-halfW,y, halfW,sh,  cx-halfW+gap,y, halfW-gap,sh);
+        // 左侧外缘回填（把脸外侧像素右移盖住空隙）
+        if(cx-halfW-gap>=0)
+            ctx.drawImage(base, cx-halfW-gap,y, gap,sh,  cx-halfW,y, gap,sh);
+        // 右半
+        if(cx+halfW<=W)
+            ctx.drawImage(base, cx,y, halfW,sh,  cx,y, halfW-gap,sh);
+        if(cx+halfW+gap<=W)
+            ctx.drawImage(base, cx+halfW,y, gap,sh,  cx+halfW-gap,y, gap,sh);
+    }
+}
+
+/* ============ 大眼：眼区放大 + 径向羽化（采样 base → 写 main）============ */
+function bigEye(cxE,cyE,ew){
+    const g=1+beauty.eye/100*0.20; if(g<=1.01) return;
+    const bw=ew*0.95, bh=ew*0.62;
+    const sx=clamp(cxE-bw,0,base.width), sy=clamp(cyE-bh,0,base.height);
+    const sw=Math.min(bw*2,base.width-sx), sh=Math.min(bh*2,base.height-sy);
+    if(sw<6||sh<6) return;
+    const dw=Math.round(sw*g), dh=Math.round(sh*g);
+    etmp.width=dw; etmp.height=dh;
+    etx.clearRect(0,0,dw,dh);
+    etx.drawImage(base, sx,sy,sw,sh, 0,0,dw,dh);
+    // 径向羽化遮罩
+    etx.globalCompositeOperation='destination-in';
+    const gr=etx.createRadialGradient(dw/2,dh/2,Math.min(dw,dh)*0.18, dw/2,dh/2,Math.min(dw,dh)*0.5);
+    gr.addColorStop(0,'rgba(0,0,0,1)'); gr.addColorStop(1,'rgba(0,0,0,0)');
+    etx.fillStyle=gr; etx.fillRect(0,0,dw,dh);
+    etx.globalCompositeOperation='source-over';
+    ctx.drawImage(etmp, cxE-dw/2, cyE-dh/2);
+}
+function bigEyes(fp){
+    if(beauty.eye<=2) return;
+    const lc={x:(fp[33].x+fp[133].x+fp[159].x+fp[145].x)/4, y:(fp[33].y+fp[133].y+fp[159].y+fp[145].y)/4};
+    const rc={x:(fp[263].x+fp[362].x+fp[386].x+fp[374].x)/4,y:(fp[263].y+fp[362].y+fp[386].y+fp[374].y)/4};
+    bigEye(lc.x,lc.y,dist(fp[33],fp[133]));
+    bigEye(rc.x,rc.y,dist(fp[263],fp[362]));
+}
+
+/* ============ 红润：脸颊柔光 ============ */
+function blush(fp){
+    const a=beauty.blush/100*0.5; if(a<0.02) return;
+    const ew=dist(fp[234],fp[454]);
+    const r=ew*0.16;
+    for(const idx of [50,280]){ const c=fp[idx];
+        const gr=ctx.createRadialGradient(c.x,c.y,0,c.x,c.y,r);
+        gr.addColorStop(0,`rgba(255,150,180,${a})`); gr.addColorStop(1,'rgba(255,150,180,0)');
+        ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(c.x,c.y,r,0,Math.PI*2); ctx.fill(); }
+}
+
+/* ============ 每手状态 ============ */
+const handState=[{open:false,pinch:false},{open:false,pinch:false}];
+
+/* ============ 渲染 ============ */
+let latestFace=null, latestHands=[];
+function render(){
+    const W=canvas.width,H=canvas.height; if(!W) return;
+    ctx.clearRect(0,0,W,H);
+
+    if(camOn){
+        drawBeautyBase(W,H);
+        ctx.drawImage(base,0,0);                 // 已磨皮调色的底图
+        const fp = latestFace ? latestFace.map(p=>({x:(1-p.x)*W, y:p.y*H})) : null;
+        if(fp && !compare){ slimFace(fp,W,H); bigEyes(fp); blush(fp); }
+    } else {
+        const g=ctx.createLinearGradient(0,0,W,H);
+        g.addColorStop(0,'#ffe9f2'); g.addColorStop(0.5,'#f3e9ff'); g.addColorStop(1,'#e9f5ff');
+        ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    }
+
+    drawAmbient(W,H);
+
+    // 手势特效（无骨架线）
+    const hands=latestHands.map(lm=>lm.map(p=>({x:(1-p.x)*W,y:p.y*H,z:p.z})));
+    const palms=[];
+    hands.forEach((lm,hi)=>{
+        const st=handState[hi]||(handState[hi]={open:false,pinch:false});
+        for(const idx of FINGERTIPS){ if(Math.random()<0.14){ const p=lm[idx];
+            emit(p.x,p.y,{ type:Math.random()<0.5?'sparkle':'dot', size:6+Math.random()*7,
+                vy:-(0.2+Math.random()*0.5), sway:0.5, maxLife:55+Math.random()*40 }); } }
+        const pinch=isPinch(lm);
+        if(st.pinch&&!pinch){ const p=lm[8];
+            for(let k=0;k<8;k++) emit(p.x,p.y,{ type:'sparkle', color:'#ffe6a0',
+                vx:(Math.random()-0.5)*2.6, vy:-(Math.random()*1.6+0.3), size:7+Math.random()*6, maxLife:45 }); }
+        st.pinch=pinch;
+        const open=isPalmOpen(lm); const pc=palmCenter(lm);
+        if(open) palms.push(pc);
+        if(open&&!st.open){ spawnRing(pc.x,pc.y,'#ffb3d1'); spawnRing(pc.x,pc.y,'#d8b8ff');
+            for(let k=0;k<10;k++) emit(pc.x,pc.y,{ type:'heart', color:rand(['#ffb3d1','#ffc6b0','#ff9ec7']),
+                size:13+Math.random()*9, vx:(Math.random()-0.5)*1.7, vy:-(0.6+Math.random()*1.2), sway:0.7, maxLife:120 });
+            for(let k=0;k<9;k++) emit(pc.x,pc.y,{ type:'petal', color:rand(['#ffd9ec','#ffe2ee','#d8b8ff','#ffe6a0']),
+                size:11+Math.random()*8, vx:(Math.random()-0.5)*2, vy:-(0.4+Math.random()*1), sway:0.9, maxLife:110 }); }
+        st.open=open;
+    });
+    if(palms.length>=2){ const a=palms[0],b=palms[1];
+        if(dist(a,b)>120 && Math.random()<0.3){ const t=Math.random(), x=a.x+(b.x-a.x)*t, y=a.y+(b.y-a.y)*t;
+            emit(x,y,{ type:'heart', color:rand(['#ff9ec7','#ffb3d1','#d8b8ff']), size:12+Math.random()*8,
+                vy:-(0.5+Math.random()*0.8), sway:0.8, maxLife:110 }); } }
+
+    for(let i=ps.length-1;i>=0;i--){ const p=ps[i]; p.update(); if(p.dead()) ps.splice(i,1); else p.draw(ctx); }
+    drawRings(ctx);
+
+    if(compare) showHint('原图（松开按钮恢复美颜）');
+    else if(hands.length===0) showHint('张开手掌会绽放爱心 💕  捏合·指尖都有惊喜');
+    else hideHint();
+}
+
+/* ============ 初始化（FaceMesh + Hands）============ */
+let faceMesh=null, handsModel=null, cameraInst=null, started=false;
+function loop(){ requestAnimationFrame(loop);
+    if(video.videoWidth && canvas.width!==video.videoWidth){
+        canvas.width=base.width=video.videoWidth; canvas.height=base.height=video.videoHeight;
+        initAmbient(canvas.width,canvas.height);
+    }
+    render();
+    if(started && !loading.classList.contains('hidden')) loading.classList.add('hidden');
+}
+async function init(){
+    try{
+        faceMesh=new FaceMesh({ locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
+        faceMesh.setOptions({ maxNumFaces:1, refineLandmarks:true, minDetectionConfidence:0.5, minTrackingConfidence:0.5 });
+        faceMesh.onResults(r=>{ latestFace=r.multiFaceLandmarks&&r.multiFaceLandmarks[0]||null; started=true; });
+
+        handsModel=new Hands({ locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+        handsModel.setOptions({ maxNumHands:2, modelComplexity:0, minDetectionConfidence:0.6, minTrackingConfidence:0.5 });
+        handsModel.onResults(r=>{ latestHands=r.multiHandLandmarks||[]; });
+
+        cameraInst=new Camera(video,{ onFrame:async()=>{
+            await faceMesh.send({image:video}); await handsModel.send({image:video}); },
+            width:960, height:540, facingMode:'user' });
+        await cameraInst.start();
+        loop();
+    }catch(err){
+        showError('镜头启动失败 :(\n'+err.message+
+            '\n\n请允许摄像头权限，并通过 http(s):// 或 localhost 打开本页面'+
+            '\n（双击 file:// 打开会被浏览器拒绝摄像头）');
+    }
+}
+window.addEventListener('load',()=>{
+    if(typeof FaceMesh==='undefined'||typeof Hands==='undefined'||typeof Camera==='undefined')
+        showError('模型加载失败\nMediaPipe 库未能载入，请检查网络（jsDelivr CDN 可能被拦截）');
+    else init();
+});
+</script>
+</body>
+</html>
